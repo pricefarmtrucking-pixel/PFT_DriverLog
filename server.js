@@ -20,26 +20,57 @@ app.use(morgan("tiny"));
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// --- Static files ---
-const PUBLIC_DIR = path.join(__dirname, "public");
-const INDEX_PATH = path.join(PUBLIC_DIR, "index.html");
+// --- Static files: auto-detect folder name & index.html ---
+const candidates = ["public", "Public", "dist", "build", "static"];
+let PUBLIC_DIR = "";
+for (const c of candidates) {
+  const p = path.join(__dirname, c);
+  if (fs.existsSync(p) && fs.existsSync(path.join(p, "index.html"))) {
+    PUBLIC_DIR = p;
+    break;
+  }
+}
+const INDEX_PATH = PUBLIC_DIR ? path.join(PUBLIC_DIR, "index.html") : null;
 
-// Log what we think the paths are, and whether index exists
-console.log("[BOOT] PUBLIC_DIR =", PUBLIC_DIR);
-console.log("[BOOT] INDEX_PATH =", INDEX_PATH, "exists:", fs.existsSync(INDEX_PATH));
+// Boot diagnostics
+console.log("[BOOT] __dirname =", __dirname);
+console.log("[BOOT] candidates =", candidates.map(c => path.join(__dirname, c)));
+console.log("[BOOT] chosen PUBLIC_DIR =", PUBLIC_DIR || "(none)");
+console.log("[BOOT] index exists =", INDEX_PATH ? fs.existsSync(INDEX_PATH) : false);
 
-// Serve /public as static
-app.use(express.static(PUBLIC_DIR, { index: "index.html", fallthrough: true }));
+// Serve static (if found), plus explicit root route
+if (PUBLIC_DIR) {
+  app.use(express.static(PUBLIC_DIR, { index: "index.html", fallthrough: true }));
+  app.get("/", (_req, res) => res.sendFile(INDEX_PATH));
+} else {
+  // Helpful message if no static dir was detected
+  app.get("/", (_req, res) => {
+    res.status(500).send(
+      `No static folder found. Expected one of ${candidates
+        .map(c => `'${c}/index.html'`)
+        .join(", ")} in repo root.`
+    );
+  });
+}
 
-// Explicit root route
-app.get("/", (_req, res) => {
-  res.sendFile(INDEX_PATH, err => {
-    if (err) {
-      console.error("[ROOT] sendFile error:", err);
-      return res
-        .status(500)
-        .send(`Index not found at ${INDEX_PATH}. Check that the repo has public/index.html (lowercase 'public').`);
+// DEBUG: list what the container actually sees
+app.get("/__debug", (_req, res) => {
+  const listing = {};
+  for (const c of candidates) {
+    const p = path.join(__dirname, c);
+    try {
+      listing[c] = fs.existsSync(p) ? fs.readdirSync(p) : "(missing)";
+    } catch (e) {
+      listing[c] = String(e);
     }
+  }
+  res.json({
+    cwd: process.cwd(),
+    __dirname,
+    candidates: candidates.map(c => path.join(__dirname, c)),
+    chosen: PUBLIC_DIR,
+    indexExists: INDEX_PATH ? fs.existsSync(INDEX_PATH) : false,
+    listing
   });
 });
 
@@ -136,7 +167,6 @@ app.post("/api/logs", (req, res) => {
   const insStop = db.prepare(`INSERT INTO stops
     (log_id,stop_no,type,location,arrive,depart,duration,detention,value_hours,grain_phase)
     VALUES (?,?,?,?,?,?,?,?,?,?)`);
-
   const stops = Array.isArray(d.stops) ? d.stops : [];
   const tx = db.transaction((rows) => {
     for (const s of rows) {
@@ -259,14 +289,12 @@ app.get("/admin/export/daily_stops.csv", requireAdmin, (req, res) => {
 // --- Health ---
 app.get("/healthz", (_req, res) => res.send("ok"));
 
-// --- Catch-all: serve index for anything else (last) ---
+// --- Catch-all: if we detected a static dir, return index; else 404 ---
 app.get("*", (_req, res) => {
-  res.sendFile(INDEX_PATH, err => {
-    if (err) {
-      console.error("[CATCHALL] sendFile error:", err);
-      res.status(404).send("Not found, and index.html not accessible.");
-    }
-  });
+  if (INDEX_PATH && fs.existsSync(INDEX_PATH)) {
+    return res.sendFile(INDEX_PATH);
+  }
+  res.status(404).send("Not found, and index.html not accessible.");
 });
 
 // --- Start ---
