@@ -13,23 +13,47 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+// --- Middleware ---
 app.use(helmet());
 app.use(morgan("tiny"));
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// static
-app.use(express.static(path.join(__dirname, "public")));
+// --- Static files ---
+const PUBLIC_DIR = path.join(__dirname, "public");
+const INDEX_PATH = path.join(PUBLIC_DIR, "index.html");
+
+// Log what we think the paths are, and whether index exists
+console.log("[BOOT] PUBLIC_DIR =", PUBLIC_DIR);
+console.log("[BOOT] INDEX_PATH =", INDEX_PATH, "exists:", fs.existsSync(INDEX_PATH));
+
+// Serve /public as static
+app.use(express.static(PUBLIC_DIR, { index: "index.html", fallthrough: true }));
+
+// Explicit root route
+app.get("/", (_req, res) => {
+  res.sendFile(INDEX_PATH, err => {
+    if (err) {
+      console.error("[ROOT] sendFile error:", err);
+      return res
+        .status(500)
+        .send(`Index not found at ${INDEX_PATH}. Check that the repo has public/index.html (lowercase 'public').`);
+    }
+  });
+});
+
+// Views (admin desk)
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
-// config
+// --- Config / DB ---
 const DISK_PATH = process.env.DISK_PATH || "./data";
 const DB_FILENAME = process.env.DB_FILENAME || "logs.db";
 fs.mkdirSync(DISK_PATH, { recursive: true });
 const DB_PATH = path.join(DISK_PATH, DB_FILENAME);
 
-// DB & schema
+// --- DB & schema ---
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.exec(`
@@ -69,7 +93,7 @@ CREATE TABLE IF NOT EXISTS stops (
 );
 `);
 
-// auth
+// --- Admin auth ---
 function requireAdmin(req, res, next) {
   const creds = basicAuth(req);
   const u = process.env.BASIC_AUTH_USER;
@@ -112,6 +136,7 @@ app.post("/api/logs", (req, res) => {
   const insStop = db.prepare(`INSERT INTO stops
     (log_id,stop_no,type,location,arrive,depart,duration,detention,value_hours,grain_phase)
     VALUES (?,?,?,?,?,?,?,?,?,?)`);
+
   const stops = Array.isArray(d.stops) ? d.stops : [];
   const tx = db.transaction((rows) => {
     for (const s of rows) {
@@ -160,7 +185,7 @@ app.get("/admin", requireAdmin, (req, res) => {
   });
 });
 
-// --- Exports ---
+// --- CSV helpers/exports ---
 function sendCsv(res, rows, columns) {
   res.setHeader("Content-Disposition", "attachment; filename=export.csv");
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -170,7 +195,6 @@ function sendCsv(res, rows, columns) {
   stringifier.end();
 }
 
-// Daily logs export
 app.get("/admin/export/daily_logs.csv", requireAdmin, (req, res) => {
   const { from, to, driver } = req.query;
   let where = [];
@@ -200,7 +224,6 @@ app.get("/admin/export/daily_logs.csv", requireAdmin, (req, res) => {
   sendCsv(res, out, Object.keys(out[0] || {}));
 });
 
-// Stops export
 app.get("/admin/export/daily_stops.csv", requireAdmin, (req, res) => {
   const { from, to, driver } = req.query;
   let where = [];
@@ -233,8 +256,21 @@ app.get("/admin/export/daily_stops.csv", requireAdmin, (req, res) => {
   sendCsv(res, out, Object.keys(out[0] || {}));
 });
 
-// health
-app.get("/healthz", (req, res) => res.send("ok"));
+// --- Health ---
+app.get("/healthz", (_req, res) => res.send("ok"));
 
+// --- Catch-all: serve index for anything else (last) ---
+app.get("*", (_req, res) => {
+  res.sendFile(INDEX_PATH, err => {
+    if (err) {
+      console.error("[CATCHALL] sendFile error:", err);
+      res.status(404).send("Not found, and index.html not accessible.");
+    }
+  });
+});
+
+// --- Start ---
 const port = process.env.PORT || 10000;
-app.listen(port, () => console.log(`listening on ${port}`));
+app.listen(port, () => {
+  console.log(`listening on ${port}`);
+});
