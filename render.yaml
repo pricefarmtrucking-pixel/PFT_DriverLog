@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: truck-daily-log
+    env: node
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BASIC_AUTH_USER
+        sync: false
+      - key: BASIC_AUTH_PASS
+        sync: false
+      - key: DISK_PATH
+        value: /var/data
+      - key: DB_FILENAME
+        value: logs.db
+    disks:
+      - name: data
+        mountPath: /var/data

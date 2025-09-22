@@ -1,0 +1,19 @@
+{
+  "name": "truck-daily-log-render",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "basic-auth": "2.0.1",
+    "better-sqlite3": "9.4.0",
+    "csv-stringify": "6.5.0",
+    "dayjs": "1.11.13",
+    "ejs": "3.1.10",
+    "express": "4.19.2",
+    "helmet": "7.1.0",
+    "morgan": "1.10.0"
+  }
+}
